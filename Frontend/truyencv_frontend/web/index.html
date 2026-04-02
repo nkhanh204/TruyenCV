@@ -34,10 +34,17 @@
 </head>
 <body>
   <script>
+    // Trigger eager voice loading so it's ready by the time the user clicks Play
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = function() {
+      window.speechSynthesis.getVoices();
+    };
+
     // TTS helper - gọi từ Flutter qua dart:js_interop
     window.flutterTtsSpeak = function(text, rate) {
       window.speechSynthesis.cancel();
       if (!text) return;
+
       var chunks = [];
       var maxLen = 200;
       while (text.length > 0) {
@@ -47,9 +54,19 @@
         chunks.push(text.substring(0, cut));
         text = text.substring(cut).trim();
       }
+      
+      var voices = window.speechSynthesis.getVoices();
+      var viVoice = voices.find(v => v.lang.toLowerCase().includes('vi') || 
+                                     v.name.toLowerCase().includes('viet') || 
+                                     v.name.toLowerCase().includes('việt') ||
+                                     v.name.toLowerCase().includes('hoài'));
+
       chunks.forEach(function(chunk) {
         var u = new SpeechSynthesisUtterance(chunk);
         u.lang = 'vi-VN';
+        if (viVoice) {
+          u.voice = viVoice;
+        }
         u.rate = rate || 1.0;
         u.volume = 1.0;
         window.speechSynthesis.speak(u);
