@@ -51,7 +51,7 @@ public class UsersController : ControllerBase
     {
         // Note: For stateless APIs, logout is typically handled client-side by removing the token.
         // If using session-based authentication, you would call SignOutAsync here.
-        return Ok(new { status = true, message = "??ng xu?t th�nh c�ng.", data = (object?)null });
+        return Ok(new { status = true, message = "Đăng xuất thành công", data = (object?)null });
     }
 
     private static Dictionary<string, string[]> ToErrorDict(ModelStateDictionary modelState)
@@ -60,7 +60,7 @@ public class UsersController : ControllerBase
             .ToDictionary(
                 k => k.Key,
                 v => v.Value!.Errors
-                    .Select(e => string.IsNullOrWhiteSpace(e.ErrorMessage) ? "D? li?u kh�ng h?p l?." : e.ErrorMessage)
+                    .Select(e => string.IsNullOrWhiteSpace(e.ErrorMessage) ? "Dữ liệu không khớp." : e.ErrorMessage)
                     .ToArray()
             );
 }

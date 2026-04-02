@@ -4,11 +4,14 @@ import '../models/author.dart';
 import '../services/story_service.dart';
 import '../services/author_service.dart';
 import '../services/auth_service.dart';
+import '../services/import_service.dart';
+import '../config/api_config.dart';
 import 'story_form_screen.dart';
 import 'author_form_screen.dart';
 import 'pending_authors_screen.dart';
 import 'chapters_list_screen.dart';
 import 'genre_management_screen.dart';
+import 'admin/import_story_screen.dart';
 
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
@@ -34,7 +37,7 @@ class _AdminScreenState extends State<AdminScreen>
   void initState() {
     super.initState();
     _checkAccess();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
     _initializeServices();
     _loadStories();
     _loadAuthors();
@@ -239,6 +242,7 @@ class _AdminScreenState extends State<AdminScreen>
             Tab(icon: Icon(Icons.person), text: 'Tác giả'),
             Tab(icon: Icon(Icons.verified_user), text: 'Duyệt tác giả'),
             Tab(icon: Icon(Icons.category), text: 'Thể loại'),
+            Tab(icon: Icon(Icons.cloud_download), text: 'Import'),
           ],
         ),
       ),
@@ -249,6 +253,7 @@ class _AdminScreenState extends State<AdminScreen>
           _buildAuthorsTab(),
           _buildPendingAuthorsTab(),
           const GenreManagementScreen(),
+          _buildImportTab(),
         ],
       ),
     );
@@ -357,11 +362,12 @@ class _AdminScreenState extends State<AdminScreen>
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => ChaptersListScreen(
-                storyId: story.storyId,
-                storyTitle: story.title,
-                canEdit: true, // Admin luôn có quyền edit
-              ),
+              builder:
+                  (context) => ChaptersListScreen(
+                    storyId: story.storyId,
+                    storyTitle: story.title,
+                    canEdit: true, // Admin luôn có quyền edit
+                  ),
             ),
           );
         },
@@ -370,131 +376,141 @@ class _AdminScreenState extends State<AdminScreen>
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-            // Cover image
-            if (story.coverImage != null && story.coverImage!.isNotEmpty)
-              Container(
-                width: 60,
-                height: 90,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                    story.coverImage!,
-                    width: 60,
-                    height: 90,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return const Icon(Icons.book, size: 30, color: Colors.grey);
-                    },
+              // Cover image
+              if (story.coverImage != null && story.coverImage!.isNotEmpty)
+                Container(
+                  width: 60,
+                  height: 90,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                ),
-              ),
-            if (story.coverImage != null && story.coverImage!.isNotEmpty)
-              const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    story.title,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      story.coverImage!,
+                      width: 60,
+                      height: 90,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return const Icon(
+                          Icons.book,
+                          size: 30,
+                          color: Colors.grey,
+                        );
+                      },
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _getStatusColor(story.status).withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          story.status,
-                          style: TextStyle(
-                            color: _getStatusColor(story.status),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
+                ),
+              if (story.coverImage != null && story.coverImage!.isNotEmpty)
+                const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      story.title,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _getStatusColor(
+                              story.status,
+                            ).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            story.status,
+                            style: TextStyle(
+                              color: _getStatusColor(story.status),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Cập nhật: ${_formatDate(story.updatedAt)}',
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 12,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Cập nhật: ${_formatDate(story.updatedAt)}',
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 12,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Button thêm/quản lý chương - rõ ràng hơn
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder:
+                              (context) => ChaptersListScreen(
+                                storyId: story.storyId,
+                                storyTitle: story.title,
+                                canEdit: true, // Admin luôn có quyền edit
+                              ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.menu_book, size: 18),
+                    label: const Text('Chương', style: TextStyle(fontSize: 12)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
                       ),
-                    ],
+                      minimumSize: const Size(0, 36),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.edit, color: Colors.blue),
+                    tooltip: 'Sửa truyện',
+                    onPressed: () async {
+                      final result = await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder:
+                              (context) =>
+                                  StoryFormScreen(storyId: story.storyId),
+                        ),
+                      );
+                      if (result == true) {
+                        _loadStories();
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red),
+                    tooltip: 'Xóa truyện',
+                    onPressed: () => _deleteStory(story.storyId, story.title),
                   ),
                 ],
               ),
-            ),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Button thêm/quản lý chương - rõ ràng hơn
-                ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ChaptersListScreen(
-                          storyId: story.storyId,
-                          storyTitle: story.title,
-                          canEdit: true, // Admin luôn có quyền edit
-                        ),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.menu_book, size: 18),
-                  label: const Text(
-                    'Chương',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    minimumSize: const Size(0, 36),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.blue),
-                  tooltip: 'Sửa truyện',
-                  onPressed: () async {
-                    final result = await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder:
-                            (context) =>
-                                StoryFormScreen(storyId: story.storyId),
-                      ),
-                    );
-                    if (result == true) {
-                      _loadStories();
-                    }
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red),
-                  tooltip: 'Xóa truyện',
-                  onPressed: () => _deleteStory(story.storyId, story.title),
-                ),
-              ],
-            ),
             ],
           ),
         ),
@@ -696,6 +712,16 @@ class _AdminScreenState extends State<AdminScreen>
 
   Widget _buildPendingAuthorsTab() {
     return const PendingAuthorsScreen();
+  }
+
+  Widget _buildImportTab() {
+    final authService = AuthService();
+    final importService = ImportService(
+      baseUrl: ApiConfig.baseUrl,
+      authToken: authService.token ?? '',
+    );
+
+    return ImportStoryScreen(importService: importService);
   }
 
   String _formatDate(DateTime date) {

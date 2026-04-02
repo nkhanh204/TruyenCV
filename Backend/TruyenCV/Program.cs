@@ -24,6 +24,9 @@ builder.Services.AddControllers()
 builder.Services.AddDbContext<TruyenCVDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+// Memory Cache
+builder.Services.AddMemoryCache();
+
 // Identity (sử dụng ApplicationUser thay vì IdentityUser)
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>()
     .AddEntityFrameworkStores<TruyenCVDbContext>()
@@ -85,6 +88,9 @@ builder.Services.AddScoped<IFollowStoryService, FollowStoryService>();
 builder.Services.AddScoped<IFollowAuthorService, FollowAuthorService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+
+// HTTP Client & Data Scraper Service
+builder.Services.AddHttpClient<IDataScraperService, DataScraperService>();
 
 var app = builder.Build();
 
