@@ -36,13 +36,20 @@ dependencies:
   cupertino_icons: ^1.0.8
   
   # HTTP client for API calls
-  http: ^1.1.0
+  http: ^1.6.0
   
   # State management
   provider: ^6.1.1
   
   # Local storage for settings
   shared_preferences: ^2.2.2
+
+  # Text-to-speech (đọc truyện)
+  flutter_tts: ^4.2.3
+
+  # Web Speech API (ép tiếng Việt trên trình duyệt)
+  web: ^1.1.0
+  audioplayers: ^6.6.0
 
 dev_dependencies:
   flutter_test:

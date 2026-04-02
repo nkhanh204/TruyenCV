@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../models/chapter.dart';
 import '../services/chapter_service.dart';
+import '../services/chapter_tts_service.dart';
+import '../services/chapter_tts_fpt_service.dart';
+import '../services/tts_web.dart';
 import '../services/reading_history_service.dart';
 import '../services/auth_service.dart';
 import '../services/comment_service.dart';
@@ -26,11 +30,14 @@ class ChapterReaderScreen extends StatefulWidget {
   State<ChapterReaderScreen> createState() => _ChapterReaderScreenState();
 }
 
-class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerProviderStateMixin {
+class _ChapterReaderScreenState extends State<ChapterReaderScreen>
+    with TickerProviderStateMixin {
   final ChapterService _chapterService = ChapterService();
   final ReadingHistoryService _historyService = ReadingHistoryService();
   final CommentService _commentService = CommentService();
   final ReadingSettingsService _readingSettings = ReadingSettingsService();
+  final ChapterTtsService _ttsService = ChapterTtsService();
+  final ChapterTtsFptService _fptTtsService = ChapterTtsFptService();
   final TextEditingController _commentController = TextEditingController();
   Chapter? _chapter;
   bool _isLoading = true;
@@ -46,10 +53,12 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerPr
   Timer? _autoScrollTimer;
   double _scrollSpeed = 10.0; // Tốc độ cuộn mặc định (pixels mỗi giây)
   bool _isScrolling = false; // Flag để đảm bảo chỉ có một animation chạy
+  double _ttsRate = 1.0;
 
   @override
   void initState() {
     super.initState();
+    _ttsService.onStateChanged = _onTtsStateChanged;
     // Set token từ AuthService singleton
     final authService = AuthService();
     if (authService.token != null) {
@@ -61,11 +70,123 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerPr
     _loadComments();
   }
 
+  void _onTtsStateChanged() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> _initializeSettings() async {
     await _readingSettings.initialize();
     setState(() {
       _fontSize = _readingSettings.fontSize;
+      _ttsRate = _readingSettings.ttsRate;
     });
+  }
+
+  void _showTtsRateDialog() {
+    double temp = _ttsRate;
+    showDialog(
+      context: context,
+      builder:
+          (context) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Text('Tốc độ đọc (nghe truyện)'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${(temp * 100).round()}%',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Nhấn giữ nút tai nghe để mở lại',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Slider(
+                      value: temp,
+                      min: _readingSettings.minTtsRate,
+                      max: _readingSettings.maxTtsRate,
+                      divisions: 10,
+                      label: '${(temp * 100).round()}%',
+                      onChanged: (value) {
+                        setDialogState(() {
+                          temp = value;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Hủy'),
+                  ),
+                  TextButton(
+                    onPressed: () async {
+                      await _readingSettings.setTtsRate(temp);
+                      if (mounted) {
+                        setState(() {
+                          _ttsRate = _readingSettings.ttsRate;
+                        });
+                      }
+                      if (_ttsService.isSpeaking) {
+                        await _ttsService.setSpeechRate(_ttsRate);
+                      }
+                      if (context.mounted) Navigator.pop(context);
+                    },
+                    child: const Text('Áp dụng'),
+                  ),
+                ],
+              );
+            },
+          ),
+    );
+  }
+
+  Future<void> _toggleChapterTts() async {
+    if (_chapter == null) return;
+
+    // Web: dùng JS speechSynthesis trực tiếp
+    if (kIsWeb) {
+      if (TtsWeb.isSpeaking) {
+        TtsWeb.stop();
+      } else {
+        final plain = ChapterTtsService.stripHtmlForSpeech(_chapter!.content);
+        final title = _chapter!.title ?? '';
+        final text = title.isNotEmpty ? '$title. $plain' : plain;
+        TtsWeb.speak(text, _ttsRate); // gọi đồng bộ ngay trong gesture
+      }
+      setState(() {});
+      return;
+    }
+
+    // Mobile: dùng flutter_tts
+    if (_ttsService.isSpeaking) {
+      await _ttsService.stop();
+      return;
+    }
+
+    final plain = ChapterTtsService.stripHtmlForSpeech(_chapter!.content);
+    if (plain.isEmpty) return;
+
+    if (_isAutoScrolling) {
+      _stopAutoScroll();
+      setState(() { _isAutoScrolling = false; });
+    }
+
+    await _ttsService.speakChapter(
+      title: _chapter!.title,
+      content: _chapter!.content,
+      speechRate: _ttsRate,
+    );
   }
 
   Future<void> _updateFontSize(double newSize) async {
@@ -78,105 +199,111 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerPr
   void _showScrollSpeedDialog() {
     // Lưu giá trị ban đầu để có thể hủy
     double tempSpeed = _scrollSpeed;
-    
+
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: const Text('Điều chỉnh tốc độ cuộn'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '${tempSpeed.toInt()}',
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Slider(
-                  value: tempSpeed,
-                  min: 2.0,
-                  max: 60.0,
-                  divisions: 58,
-                  label: tempSpeed.toInt().toString(),
-                  onChanged: (value) {
-                    setDialogState(() {
-                      tempSpeed = value;
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  alignment: WrapAlignment.center,
-                  children: [2, 4, 6, 8, 10, 12, 15, 20, 30, 40, 50, 60]
-                      .map((speed) => _buildSpeedButton(
-                            speed.toString(),
-                            speed.toDouble(),
-                            tempSpeed,
-                            (newSpeed) {
-                              setDialogState(() {
-                                tempSpeed = newSpeed;
-                              });
-                            },
-                          ))
-                      .toList(),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Hủy'),
-              ),
-              TextButton(
-                onPressed: () {
-                  // Lưu trạng thái đang scroll
-                  final wasScrolling = _isAutoScrolling;
-                  
-                  // Đóng dialog trước
-                  Navigator.pop(context);
-                  
-                  // Dừng auto-scroll nếu đang chạy
-                  if (wasScrolling) {
-                    _stopAutoScroll();
-                  }
-                  
-                  // Cập nhật tốc độ mới
-                  setState(() {
-                    _scrollSpeed = tempSpeed;
-                  });
-                  
-                  // Nếu đang scroll, bật lại với tốc độ mới sau một chút delay
-                  if (wasScrolling) {
-                    Future.delayed(const Duration(milliseconds: 200), () {
-                      if (mounted) {
-                        setState(() {
-                          _isAutoScrolling = true;
-                        });
-                        _startAutoScroll();
-                      }
-                    });
-                  } else {
-                    // Hiển thị thông báo tốc độ đã được cập nhật
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Tốc độ đã được đặt: ${tempSpeed.toInt()}'),
-                        duration: const Duration(seconds: 1),
+      builder:
+          (context) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Text('Điều chỉnh tốc độ cuộn'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '${tempSpeed.toInt()}',
+                      style: const TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
                       ),
-                    );
-                  }
-                },
-                child: const Text('Áp dụng'),
-              ),
-            ],
-          );
-        },
-      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Slider(
+                      value: tempSpeed,
+                      min: 2.0,
+                      max: 60.0,
+                      divisions: 58,
+                      label: tempSpeed.toInt().toString(),
+                      onChanged: (value) {
+                        setDialogState(() {
+                          tempSpeed = value;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children:
+                          [2, 4, 6, 8, 10, 12, 15, 20, 30, 40, 50, 60]
+                              .map(
+                                (speed) => _buildSpeedButton(
+                                  speed.toString(),
+                                  speed.toDouble(),
+                                  tempSpeed,
+                                  (newSpeed) {
+                                    setDialogState(() {
+                                      tempSpeed = newSpeed;
+                                    });
+                                  },
+                                ),
+                              )
+                              .toList(),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Hủy'),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      // Lưu trạng thái đang scroll
+                      final wasScrolling = _isAutoScrolling;
+
+                      // Đóng dialog trước
+                      Navigator.pop(context);
+
+                      // Dừng auto-scroll nếu đang chạy
+                      if (wasScrolling) {
+                        _stopAutoScroll();
+                      }
+
+                      // Cập nhật tốc độ mới
+                      setState(() {
+                        _scrollSpeed = tempSpeed;
+                      });
+
+                      // Nếu đang scroll, bật lại với tốc độ mới sau một chút delay
+                      if (wasScrolling) {
+                        Future.delayed(const Duration(milliseconds: 200), () {
+                          if (mounted) {
+                            setState(() {
+                              _isAutoScrolling = true;
+                            });
+                            _startAutoScroll();
+                          }
+                        });
+                      } else {
+                        // Hiển thị thông báo tốc độ đã được cập nhật
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Tốc độ đã được đặt: ${tempSpeed.toInt()}',
+                            ),
+                            duration: const Duration(seconds: 1),
+                          ),
+                        );
+                      }
+                    },
+                    child: const Text('Áp dụng'),
+                  ),
+                ],
+              );
+            },
+          ),
     );
   }
 
@@ -202,86 +329,88 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerPr
     );
   }
 
-
   void _showFontSizeDialog() {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Điều chỉnh kích thước chữ'),
-        content: StatefulBuilder(
-          builder: (context, setDialogState) {
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Kích thước: ${_fontSize.toInt()}',
-                  style: TextStyle(fontSize: _fontSize),
-                ),
-                const SizedBox(height: 16),
-                Slider(
-                  value: _fontSize,
-                  min: _readingSettings.minFontSize,
-                  max: _readingSettings.maxFontSize,
-                  divisions: 6,
-                  label: _fontSize.toInt().toString(),
-                  onChanged: (value) {
-                    setDialogState(() {
-                      _fontSize = value;
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Điều chỉnh kích thước chữ'),
+            content: StatefulBuilder(
+              builder: (context, setDialogState) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.remove_circle_outline),
-                      onPressed: () {
+                    Text(
+                      'Kích thước: ${_fontSize.toInt()}',
+                      style: TextStyle(fontSize: _fontSize),
+                    ),
+                    const SizedBox(height: 16),
+                    Slider(
+                      value: _fontSize,
+                      min: _readingSettings.minFontSize,
+                      max: _readingSettings.maxFontSize,
+                      divisions: 6,
+                      label: _fontSize.toInt().toString(),
+                      onChanged: (value) {
                         setDialogState(() {
-                          _fontSize = (_fontSize - 2)
-                              .clamp(_readingSettings.minFontSize,
-                                  _readingSettings.maxFontSize);
+                          _fontSize = value;
                         });
                       },
                     ),
-                    TextButton(
-                      onPressed: () {
-                        setDialogState(() {
-                          _fontSize = 16.0;
-                        });
-                      },
-                      child: const Text('Mặc định'),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.add_circle_outline),
-                      onPressed: () {
-                        setDialogState(() {
-                          _fontSize = (_fontSize + 2)
-                              .clamp(_readingSettings.minFontSize,
-                                  _readingSettings.maxFontSize);
-                        });
-                      },
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.remove_circle_outline),
+                          onPressed: () {
+                            setDialogState(() {
+                              _fontSize = (_fontSize - 2).clamp(
+                                _readingSettings.minFontSize,
+                                _readingSettings.maxFontSize,
+                              );
+                            });
+                          },
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            setDialogState(() {
+                              _fontSize = 16.0;
+                            });
+                          },
+                          child: const Text('Mặc định'),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.add_circle_outline),
+                          onPressed: () {
+                            setDialogState(() {
+                              _fontSize = (_fontSize + 2).clamp(
+                                _readingSettings.minFontSize,
+                                _readingSettings.maxFontSize,
+                              );
+                            });
+                          },
+                        ),
+                      ],
                     ),
                   ],
-                ),
-              ],
-            );
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Hủy'),
+                );
+              },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Hủy'),
+              ),
+              TextButton(
+                onPressed: () {
+                  _updateFontSize(_fontSize);
+                  Navigator.pop(context);
+                },
+                child: const Text('Áp dụng'),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () {
-              _updateFontSize(_fontSize);
-              Navigator.pop(context);
-            },
-            child: const Text('Áp dụng'),
-          ),
-        ],
-      ),
     );
   }
 
@@ -342,6 +471,11 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerPr
             icon: const Icon(Icons.text_fields),
             onPressed: _showFontSizeDialog,
             tooltip: 'Điều chỉnh kích thước chữ',
+          ),
+          IconButton(
+            icon: const Icon(Icons.record_voice_over_outlined),
+            onPressed: _showTtsRateDialog,
+            tooltip: 'Tốc độ đọc khi nghe truyện',
           ),
           IconButton(
             icon: const Icon(Icons.speed),
@@ -457,38 +591,64 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerPr
                   ],
                 ),
               ),
-      floatingActionButton: _chapter != null && !_isLoading && _errorMessage == null
-          ? Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_isAutoScrolling)
+      floatingActionButton:
+          _chapter != null && !_isLoading && _errorMessage == null
+              ? Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8.0),
-                    child: FloatingActionButton(
-                      heroTag: "speed",
-                      mini: true,
-                      onPressed: _showScrollSpeedDialog,
-                      backgroundColor: Colors.purple.shade300,
-                      child: const Icon(
-                        Icons.speed,
-                        color: Colors.white,
+                    child: GestureDetector(
+                      onLongPress: _showTtsRateDialog,
+                      child: FloatingActionButton(
+                        heroTag: 'tts',
+                        mini: true,
+                        backgroundColor:
+                            _ttsService.isSpeaking
+                                ? Colors.deepOrange
+                                : Colors.teal,
+                        onPressed: () => unawaited(_toggleChapterTts()),
+                        tooltip:
+                            _ttsService.isSpeaking
+                                ? 'Dừng đọc'
+                                : 'Nghe truyện (giữ: tốc độ)',
+                        child: Icon(
+                          _ttsService.isSpeaking
+                              ? Icons.stop
+                              : Icons.headphones,
+                          color: Colors.white,
+                        ),
                       ),
-                      tooltip: 'Điều chỉnh tốc độ',
                     ),
                   ),
-                FloatingActionButton(
-                  heroTag: "autoscroll",
-                  onPressed: _toggleAutoScroll,
-                  backgroundColor: _isAutoScrolling ? Colors.red : Colors.purple,
-                  child: Icon(
-                    _isAutoScrolling ? Icons.pause : Icons.play_arrow,
-                    color: Colors.white,
+                  if (_isAutoScrolling)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0),
+                      child: FloatingActionButton(
+                        heroTag: "speed",
+                        mini: true,
+                        onPressed: _showScrollSpeedDialog,
+                        backgroundColor: Colors.purple.shade300,
+                        child: const Icon(Icons.speed, color: Colors.white),
+                        tooltip: 'Điều chỉnh tốc độ',
+                      ),
+                    ),
+                  FloatingActionButton(
+                    heroTag: "autoscroll",
+                    onPressed: _toggleAutoScroll,
+                    backgroundColor:
+                        _isAutoScrolling ? Colors.red : Colors.purple,
+                    child: Icon(
+                      _isAutoScrolling ? Icons.pause : Icons.play_arrow,
+                      color: Colors.white,
+                    ),
+                    tooltip:
+                        _isAutoScrolling ? 'Dừng tự động cuộn' : 'Tự động cuộn',
                   ),
-                  tooltip: _isAutoScrolling ? 'Dừng tự động cuộn' : 'Tự động cuộn',
-                ),
-              ],
-            )
-          : null,
+                ],
+              )
+              : null,
     );
   }
 
@@ -667,11 +827,16 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerPr
   }
 
   void _toggleAutoScroll() {
+    final willStart = !_isAutoScrolling;
+    if (willStart) {
+      unawaited(_ttsService.stop());
+    }
+
     setState(() {
-      _isAutoScrolling = !_isAutoScrolling;
+      _isAutoScrolling = willStart;
     });
 
-    if (_isAutoScrolling) {
+    if (willStart) {
       _startAutoScroll();
     } else {
       _stopAutoScroll();
@@ -681,13 +846,15 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerPr
   void _startAutoScroll() {
     _autoScrollTimer?.cancel();
     _isScrolling = false;
-    
+
     // Sử dụng interval cố định 16ms (~60fps) để cuộn mượt mà
     // Tính toán pixels mỗi frame dựa trên tốc độ (pixels/giây)
     const int frameInterval = 16; // 16ms = ~60fps
     final double pixelsPerFrame = _scrollSpeed / 60.0; // Chia cho 60 vì 60fps
-    
-    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: frameInterval), (timer) {
+
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: frameInterval), (
+      timer,
+    ) {
       if (!_isAutoScrolling || !_scrollController.hasClients) {
         _stopAutoScroll();
         return;
@@ -712,8 +879,11 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerPr
       }
 
       // Tính toán vị trí mới - cuộn từng chút một để mượt mà
-      final newPosition = (currentScroll + pixelsPerFrame).clamp(0.0, maxScroll);
-      
+      final newPosition = (currentScroll + pixelsPerFrame).clamp(
+        0.0,
+        maxScroll,
+      );
+
       // Sử dụng jumpTo với số pixels rất nhỏ mỗi frame để tạo hiệu ứng mượt mà liên tục
       // jumpTo sẽ không có animation delay, tạo ra cuộn liên tục mượt mà như video
       _scrollController.jumpTo(newPosition);
@@ -728,6 +898,8 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> with TickerPr
 
   @override
   void dispose() {
+    _ttsService.onStateChanged = null;
+    unawaited(_ttsService.stop());
     _stopAutoScroll();
     _scrollController.dispose();
     _commentController.dispose();

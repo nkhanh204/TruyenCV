@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
   <!--
     If you are serving your web app in a path other than the root, change the
@@ -33,6 +33,35 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
+  <script>
+    // TTS helper - gọi từ Flutter qua dart:js_interop
+    window.flutterTtsSpeak = function(text, rate) {
+      window.speechSynthesis.cancel();
+      if (!text) return;
+      var chunks = [];
+      var maxLen = 200;
+      while (text.length > 0) {
+        if (text.length <= maxLen) { chunks.push(text); break; }
+        var cut = text.lastIndexOf(' ', maxLen);
+        if (cut <= 0) cut = maxLen;
+        chunks.push(text.substring(0, cut));
+        text = text.substring(cut).trim();
+      }
+      chunks.forEach(function(chunk) {
+        var u = new SpeechSynthesisUtterance(chunk);
+        u.lang = 'vi-VN';
+        u.rate = rate || 1.0;
+        u.volume = 1.0;
+        window.speechSynthesis.speak(u);
+      });
+    };
+    window.flutterTtsStop = function() {
+      window.speechSynthesis.cancel();
+    };
+    window.flutterTtsIsSpeaking = function() {
+      return window.speechSynthesis.speaking;
+    };
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
