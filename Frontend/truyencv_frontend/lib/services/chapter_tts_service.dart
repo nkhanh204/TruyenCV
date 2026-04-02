@@ -244,6 +244,7 @@ class ChapterTtsService {
         final tts = _tts!;
         for (var i = 0; i < _chunks.length; i++) {
           if (!_speaking) break;
+          await tts.setLanguage('vi-VN');
           await tts.speak(_chunks[i]);
         }
       }
